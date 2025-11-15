@@ -18,8 +18,11 @@ class FeatureEngineeringService {
         return { success: false, reason: "insufficient_data" };
       }
 
-      // Compute all 15 features
-      const features = await this.computeAllFeatures(client, userId);
+      // Compute all 14 features
+      let features = await this.computeAllFeatures(client, userId);
+
+      // Sanitize features to handle edge cases and ensure consistency
+      features = this.sanitizeFeatures(features);
 
       // Count how many features are filled
       const featuresFilled = this.countFilledFeatures(features);
@@ -323,17 +326,66 @@ class FeatureEngineeringService {
 
     featureKeys.forEach((key) => {
       const value = features[key];
-      if (
-        value !== null &&
-        value !== undefined &&
-        !isNaN(parseFloat(value)) &&
-        parseFloat(value) !== 0
-      ) {
+      if (value !== null && value !== undefined && !isNaN(parseFloat(value))) {
         filled++;
       }
     });
 
     return filled;
+  }
+  sanitizeFeatures(features) {
+    const sanitized = { ...features };
+
+    // Ensure all numeric values are valid numbers
+    Object.keys(sanitized).forEach((key) => {
+      const value = sanitized[key];
+
+      // Convert null to 0 for rate and count fields
+      if (value === null || value === undefined) {
+        if (
+          key.includes("rate") ||
+          key === "total_submissions" ||
+          key === "total_study_days"
+        ) {
+          sanitized[key] = 0;
+        }
+      }
+
+      // Cap learning_frequency_per_week at reasonable maximum (7 days)
+      if (key === "learning_frequency_per_week" && parseFloat(value) > 7) {
+        logger.warn(
+          `learning_frequency_per_week value ${value} exceeds 7 days, capping to 7`
+        );
+        sanitized[key] = 7.0;
+      }
+
+      // Ensure rates are between 0 and 1
+      if (key.includes("rate")) {
+        const numValue = parseFloat(sanitized[key]);
+        if (numValue > 1) {
+          logger.warn(`${key} value ${numValue} exceeds 1.0, capping to 1.0`);
+          sanitized[key] = 1.0;
+        }
+        if (numValue < 0) {
+          logger.warn(`${key} value ${numValue} is negative, setting to 0`);
+          sanitized[key] = 0;
+        }
+      }
+
+      // Ensure exam score is between 0 and 100
+      if (key === "avg_exam_score") {
+        const numValue = parseFloat(sanitized[key]);
+        if (numValue > 100) {
+          logger.warn(`avg_exam_score value ${numValue} exceeds 100, capping`);
+          sanitized[key] = 100;
+        }
+        if (numValue < 0) {
+          sanitized[key] = 0;
+        }
+      }
+    });
+
+    return sanitized;
   }
 }
 
